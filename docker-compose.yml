@@ -1,0 +1,29 @@
+version: '3.8'
+services:
+  # 1. Tera Spring Boot Cloud App
+  cloud-app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      # Isko pata hoga ki database ka naam 'db' hai
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql-db:3306/cloudbillingdb?createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true&useSSL=false
+      - SPRING_DATASOURCE_USERNAME=root
+      - SPRING_DATASOURCE_PASSWORD=root
+    depends_on:
+      - mysql-db
+
+  # 2. MySQL Database Container
+  mysql-db:
+    image: mysql:8.0
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=cloudbillingdb
+    volumes:
+      # Data safe rakhne ke liye volume (taaki container delete ho toh data na ude)
+      - db_data:/var/lib/mysql
+
+volumes:
+  db_data:

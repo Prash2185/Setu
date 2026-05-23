@@ -1,140 +1,280 @@
 package com.setu.cloudbilling;
 
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.core.io.Resource;
-import org.springframework.core.io.UrlResource;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
+import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
-
-import java.io.File;
-import java.io.IOException;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.List;
-import java.util.Optional; // NAYA IMPORT
+import org.springframework.web.servlet.ModelAndView;
+import org.springframework.web.servlet.view.RedirectView;
 
 @RestController
 public class TestController {
 
-    @Autowired
-    private FileMetadataRepository repository;
+    @Autowired private FileMetadataRepository repository;
+    @Autowired private UserRepository userRepository;
+    @Autowired private PasswordEncoder passwordEncoder;
+    @Autowired private AccessRequestRepository accessRequestRepository;
+    @Autowired private SupabaseStorageService supabaseStorageService; 
+    @Autowired private UserPlanRepository userPlanRepository;
+    
+    // 📊 NAYA ENGINE: Metering Ledger
+    @Autowired private UsageEventRepository usageEventRepository;
+
+    private String getDisplayName(Authentication authentication) {
+        if (authentication instanceof OAuth2AuthenticationToken) {
+            OAuth2User oauth2User = ((OAuth2AuthenticationToken) authentication).getPrincipal();
+            if (oauth2User.getAttributes().containsKey("name")) return oauth2User.getAttribute("name").toString();
+            if (oauth2User.getAttributes().containsKey("email")) return oauth2User.getAttribute("email").toString();
+        }
+        return authentication.getName(); 
+    }
+
+    private String generateSmartTag(String fileName) {
+        String lowerName = fileName.toLowerCase();
+        if (lowerName.contains("resume") || lowerName.contains("cv") || lowerName.contains("portfolio")) return "👔 Resume/CV";
+        else if (lowerName.contains("bill") || lowerName.contains("invoice") || lowerName.contains("receipt") || lowerName.contains("tax")) return "💰 Invoice/Bill";
+        else if (lowerName.contains("id") || lowerName.contains("aadhar") || lowerName.contains("pan") || lowerName.contains("passport")) return "🪪 ID Card";
+        else if (lowerName.endsWith(".png") || lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg") || lowerName.endsWith(".gif")) return "🖼️ Image";
+        else if (lowerName.endsWith(".mp4") || lowerName.endsWith(".mkv") || lowerName.endsWith(".avi")) return "🎬 Video";
+        else if (lowerName.endsWith(".zip") || lowerName.endsWith(".rar")) return "🗜️ Archive";
+        else return "📄 Document"; 
+    }
+
+    @GetMapping("/login")
+    public ModelAndView showLoginPage() { 
+        return new ModelAndView("login"); 
+    }
 
     @GetMapping(value = "/", produces = "text/html")
-    public String showUploadForm() {
-        return "<html><body style='font-family: sans-serif; padding: 20px;'>" +
-               "<h2>☁️ Zoho SETU: Cloud Engine</h2>" +
-               "<form method='POST' action='/upload' enctype='multipart/form-data'>" +
-               "<input type='file' name='file' required /><br/><br/>" +
-               "<button type='submit'>Upload to Cloud</button>" +
-               "</form>" +
-               "<br><a href='/invoice' target='_blank'><button>Generate Monthly Bill</button></a>" +
-               "</body></html>";
+    public String showUploadForm(Authentication authentication) {
+        return "<script>window.location.href='/dashboard';</script>";
+    }
+
+    @GetMapping("/dashboard")
+    public ModelAndView showModernDashboard(Authentication authentication) {
+        String dbUser = authentication.getName(); 
+        String displayName = getDisplayName(authentication);
+        
+        UserPlan userPlan = userPlanRepository.findByUsername(dbUser);
+        if (userPlan == null) {
+            userPlan = new UserPlan();
+            userPlan.setUsername(dbUser);
+            userPlan.setPlanName("Free Tier (50 MB)");
+            userPlan.setMaxStorageMB(50.0);
+            userPlan.setRatePerMB(0.0000);
+            userPlanRepository.save(userPlan);
+        }
+
+        List<FileMetadata> userFiles = repository.findByOwner(dbUser);
+        double totalMB = 0;
+        for(FileMetadata f : userFiles) totalMB += f.getFileSizeMB();
+
+        // 🚀 Apply free 50 MB allowance before billing
+        double billableStorage = Math.max(0, totalMB - 50.0);
+        double totalBill = billableStorage * userPlan.getRatePerMB();
+        double storagePercent = (totalMB / userPlan.getMaxStorageMB()) * 100;
+
+        ModelAndView mav = new ModelAndView("dashboard");
+        mav.addObject("username", displayName.toUpperCase());
+        mav.addObject("files", userFiles);
+        mav.addObject("totalMB", String.format("%.2f", totalMB));
+        mav.addObject("totalBill", String.format("%.4f", totalBill)); 
+        mav.addObject("activePlan", userPlan.getPlanName());
+        mav.addObject("ratePerMB", String.valueOf(userPlan.getRatePerMB()));
+        mav.addObject("planLimit", String.format("%.0f", userPlan.getMaxStorageMB()));
+        mav.addObject("storagePercent", Math.min(storagePercent, 100)); 
+
+        return mav;
     }
 
     @PostMapping("/upload")
     public String uploadFile(@RequestParam("file") MultipartFile file) {
         try {
-            String folderPath = "D:/CloudStorage/"; 
-            String filePath = folderPath + file.getOriginalFilename();
-            file.transferTo(new File(filePath));
+            String dbUser = SecurityContextHolder.getContext().getAuthentication().getName();
+            UserPlan userPlan = userPlanRepository.findByUsername(dbUser);
             
-            double megabytes = (double) file.getSize() / (1024 * 1024); 
+            List<FileMetadata> userFiles = repository.findByOwner(dbUser);
+            double currentTotalMB = 0;
+            for(FileMetadata f : userFiles) currentTotalMB += f.getFileSizeMB();
+            
+            double newFileMB = (double) file.getSize() / (1024 * 1024); 
+            
+            if (currentTotalMB + newFileMB > userPlan.getMaxStorageMB()) {
+                return "<div style='font-family: sans-serif; text-align:center; padding: 50px;'><h1 style='color:red;'>🚨 Storage Limit Exceeded!</h1><h3>Your current <b>" + userPlan.getPlanName() + "</b> only allows up to " + userPlan.getMaxStorageMB() + " MB.</h3><p>You are trying to upload a " + String.format("%.2f", newFileMB) + " MB file, which crosses your limit.</p><a href='/dashboard'><button style='padding:15px; background:blue; color:white; font-size:18px; border:none; border-radius:10px; cursor:pointer;'>Go Back & Upgrade Plan</button></a></div>";
+            }
+
+            String originalFileName = file.getOriginalFilename();
+            if (originalFileName == null || originalFileName.contains("..")) return "Invalid File";
+
+            // ==========================================
+            // 🗂️ THE FINAL BOSS: SMART OBJECT VERSIONING
+            // ==========================================
+            String cleanOriginalName = originalFileName.replaceAll("\\s+", "_");
+            String baseName = cleanOriginalName;
+            String extension = "";
+
+            int dotIndex = cleanOriginalName.lastIndexOf('.');
+            if (dotIndex > 0) {
+                baseName = cleanOriginalName.substring(0, dotIndex);
+                extension = cleanOriginalName.substring(dotIndex);
+            }
+
+            int versionCount = 0;
+            for (FileMetadata f : userFiles) {
+                if (f.getFileName().contains(baseName)) {
+                    versionCount++;
+                }
+            }
+
+            String versionedFileName = cleanOriginalName;
+            if (versionCount > 0) {
+                versionedFileName = baseName + "_v" + (versionCount + 1) + extension;
+            }
+
+            String finalFileName = System.currentTimeMillis() + "_" + versionedFileName;
+            // ==========================================
+
+            
+            // 🛡️ SECURITY FIX 1: Supabase mein folder bana kar upload karo
+            String objectPath = dbUser + "/" + finalFileName;
+            supabaseStorageService.uploadFile(file, objectPath);
             
             FileMetadata metaData = new FileMetadata();
-            metaData.setFileName(file.getOriginalFilename());
-            metaData.setFileSizeMB(megabytes);
+            metaData.setFileName(finalFileName); // Database mein file ka naam clean rahega
+            metaData.setFileSizeMB(newFileMB);
+            metaData.setOwner(dbUser);
+            metaData.setShareId(UUID.randomUUID().toString());
+            metaData.setFileTag(generateSmartTag(originalFileName));
+            metaData.setShareExpiryTime(LocalDateTime.now().plusHours(24));
+
+
+            
             repository.save(metaData); 
+
+            // 🟢 SENSOR 1: Log the UPLOAD Event
+            usageEventRepository.save(new UsageEvent(dbUser, "UPLOAD", finalFileName, newFileMB, LocalDateTime.now()));
+
+            return "<script>window.location.href='/dashboard';</script>";
             
-            return "<h3>✅ SUCCESS! File Uploaded.</h3>" +
-                   "<a href='/'>Upload Another</a> | <a href='/invoice'>See Bill</a>";
-            
-        } catch (IOException e) {
-            return "ERROR: " + e.getMessage();
-        }
-    }
-
-    @GetMapping(value = "/invoice", produces = "text/html")
-    public String generateInvoice() {
-        List<FileMetadata> allFiles = repository.findAll(); 
-        double totalSizeMB = 0;
-        StringBuilder fileDetails = new StringBuilder();
-
-        for (FileMetadata file : allFiles) {
-            totalSizeMB += file.getFileSizeMB();
-            // BUG FIX: Ab hum 'fileName' ki jagah file ki 'ID' pass kar rahe hain!
-            fileDetails.append("<li style='margin-bottom: 10px;'>")
-                       .append(file.getFileName())
-                       .append(" : <b>").append(String.format("%.2f", file.getFileSizeMB())).append(" MB</b> ")
-                       .append("<a href='/download/").append(file.getFileName()).append("'>[⬇️ Download]</a> ")
-                       .append("<a href='/delete/").append(file.getId()).append("' style='color: red;'>[🗑️ Delete]</a>")
-                       .append("</li>");
-        }
-
-        double totalBill = totalSizeMB * 15.0; 
-
-        return "<html><body style='font-family: monospace; background-color: #f4f4f4; padding: 20px;'>" +
-               "<div style='background: white; padding: 20px; border: 1px solid black; width: 550px;'>" +
-               "<h2>🧾 ZOHO SETU - TAX INVOICE</h2><hr/>" +
-               "<b>Customer:</b> System Admin<br/>" +
-               "<b>Billing Cycle:</b> March 2026<br/><hr/>" +
-               "<h3>Storage Details:</h3>" +
-               "<ul>" + fileDetails.toString() + "</ul><hr/>" +
-               "<p><b>Total Usage:</b> " + String.format("%.2f", totalSizeMB) + " MB</p>" +
-               "<p><b>Rate:</b> ₹ 15.00 / MB</p>" +
-               "<h2 style='color: green;'>TOTAL DUE: ₹ " + String.format("%.2f", totalBill) + "</h2>" +
-               "</div></body></html>";
+        } catch (Exception e) { return "ERROR: " + e.getMessage(); }
     }
 
     @GetMapping("/download/{fileName}")
-    public ResponseEntity<Resource> downloadFile(@PathVariable String fileName) {
-        try {
-            Path filePath = Paths.get("D:/CloudStorage/").resolve(fileName).normalize();
-            Resource resource = new UrlResource(filePath.toUri());
+    public RedirectView downloadFile(@PathVariable String fileName) { 
+        String currentUser = SecurityContextHolder.getContext().getAuthentication().getName();
+        
+        FileMetadata fileInfo = repository.findByFileName(fileName);
+        if (fileInfo == null) return new RedirectView("/dashboard"); // Agar file nahi mili toh wapas bhej do
+        
+        double egressMB = fileInfo.getFileSizeMB();
 
-            if (resource.exists()) {
-                return ResponseEntity.ok()
-                        .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + resource.getFilename() + "\"")
-                        .body(resource);
-            } else {
-                return ResponseEntity.notFound().build();
-            }
-        } catch (Exception e) {
-            return ResponseEntity.internalServerError().build();
-        }
+        // 🔵 SENSOR 2: Log the DOWNLOAD (Egress) Event
+        usageEventRepository.save(new UsageEvent(currentUser, "DOWNLOAD", fileName, egressMB, LocalDateTime.now()));
+
+        // 🛡️ SECURITY FIX 2: Supabase se folder ke andar se URL mangwao
+        String objectPath = fileInfo.getOwner() + "/" + fileName;
+        return new RedirectView(supabaseStorageService.getPublicUrl(objectPath)); 
     }
 
-    // ==========================================
-    // BUG FIX: THE UPGRADED DELETE ENGINE
-    // ==========================================
-    @GetMapping(value = "/delete/{id}", produces = "text/html")
+    @GetMapping("/delete/{id}")
     public String deleteFile(@PathVariable Long id) {
         try {
-            // 1. Database mein 'ID' se dhundo (100% unique)
             Optional<FileMetadata> optionalFile = repository.findById(id);
-            
             if (optionalFile.isPresent()) {
                 FileMetadata fileData = optionalFile.get();
+                String currentUser = SecurityContextHolder.getContext().getAuthentication().getName();
                 
-                // 2. Database se entry udao
-                repository.delete(fileData);
-                
-                // 3. Hard Drive se physically delete karo
-                File physicalFile = new File("D:/CloudStorage/" + fileData.getFileName());
-                if (physicalFile.exists()) {
-                    physicalFile.delete();
+                if (fileData.getOwner().equals(currentUser)) {
+                    
+                    // 🛡️ SECURITY FIX 3: Supabase folder mein ghus kar file delete karo
+                    String objectPath = currentUser + "/" + fileData.getFileName();
+                    supabaseStorageService.deleteFile(objectPath);
+                    
+                    repository.delete(fileData);
+
+                    // 🔴 SENSOR 3: Log the DELETE Event
+                    usageEventRepository.save(new UsageEvent(currentUser, "DELETE", fileData.getFileName(), fileData.getFileSizeMB(), LocalDateTime.now()));
                 }
             }
-            
-            return "<script>window.location.href='/invoice';</script>";
-            
-        } catch (Exception e) {
-            return "ERROR: " + e.getMessage();
+            return "<script>window.location.href='/dashboard';</script>";
+        } catch (Exception e) { return "ERROR: " + e.getMessage(); }
+    }
+
+    @PostMapping("/upgrade-plan")
+    public String upgradePlan(@RequestParam("planType") String planType) {
+        String dbUser = SecurityContextHolder.getContext().getAuthentication().getName();
+        UserPlan userPlan = userPlanRepository.findByUsername(dbUser);
+        switch (planType) {
+            case "Lite": userPlan.setPlanName("Lite Plan (30 GB)"); userPlan.setMaxStorageMB(30720); userPlan.setRatePerMB(0.0019); break;
+            case "Basic": userPlan.setPlanName("Basic Plan (100 GB)"); userPlan.setMaxStorageMB(102400); userPlan.setRatePerMB(0.0013); break;
+            case "Standard": userPlan.setPlanName("Standard Plan (200 GB)"); userPlan.setMaxStorageMB(204800); userPlan.setRatePerMB(0.00105); break;
+            case "Premium": userPlan.setPlanName("Premium Plan (2 TB)"); userPlan.setMaxStorageMB(2097152); userPlan.setRatePerMB(0.00032); break;
         }
+        userPlanRepository.save(userPlan);
+        return "<script>window.location.href='/dashboard';</script>";
+    }
+
+    @GetMapping(value = "/share/{uuid}", produces = "text/html")
+    public String shareFileSecurely(@PathVariable String uuid) {
+        FileMetadata fileData = repository.findByShareId(uuid);
+        if (fileData == null) return "<h3>⚠️ Invalid Link!</h3>";
+        if (fileData.getShareExpiryTime() != null && LocalDateTime.now().isAfter(fileData.getShareExpiryTime())) {
+        return "<div style='font-family: sans-serif; text-align:center; padding: 50px;'>" +
+               "<h1 style='color:red; font-size:50px;'>⏳ Link Expired!</h1>" +
+               "<h3 style='color:#333;'>Security reasons ki wajah se yeh link 24 ghante baad automatically self-destruct ho chuka hai.</h3>" +
+               "<p style='color:gray;'>Please ask the owner to generate a new share link.</p>" +
+               "</div>";
+    }
+        String currentUser = SecurityContextHolder.getContext().getAuthentication().getName();
+        if (currentUser.equals(fileData.getOwner())) return "<script>window.location.href='/download/" + fileData.getFileName() + "';</script>";
+        AccessRequest req = accessRequestRepository.findByShareIdAndRequesterUsername(uuid, currentUser);
+        if (req == null) return "<h2>🔒 Restricted</h2><form method='POST' action='/request-access/" + uuid + "'><button type='submit'>Request Access</button></form>";
+        else if (req.getStatus().equals("PENDING")) return "<h3>⏳ Pending...</h3>";
+        else if (req.getStatus().equals("APPROVED")) return "<script>window.location.href='/download/" + fileData.getFileName() + "';</script>";
+        else return "<h3 style='color:red;'>❌ Rejected.</h3>"; 
+    }
+
+    @PostMapping("/request-access/{uuid}")
+    public String sendRequest(@PathVariable String uuid) {
+        FileMetadata file = repository.findByShareId(uuid);
+        AccessRequest req = new AccessRequest(); req.setShareId(uuid); req.setRequesterUsername(SecurityContextHolder.getContext().getAuthentication().getName()); req.setOwnerUsername(file.getOwner());
+        accessRequestRepository.save(req); return "<h3>🚀 Request Sent!</h3><a href='/share/" + uuid + "'>Back</a>";
+    }
+
+    @GetMapping("/my-requests")
+        public ModelAndView viewRequests() {
+            String currentUser = SecurityContextHolder.getContext().getAuthentication().getName();
+            
+            // Database se saari pending requests nikaalo
+            List<AccessRequest> requests = accessRequestRepository.findByOwnerUsernameAndStatus(currentUser, "PENDING");
+        
+        // Isko my-requests.html page par bhej do
+            ModelAndView mav = new ModelAndView("my-requests");
+            mav.addObject("requests", requests);
+            return mav;
+    }
+
+    @GetMapping("/approve-request/{id}")
+    public String approve(@PathVariable Long id) { AccessRequest r = accessRequestRepository.findById(id).get(); r.setStatus("APPROVED"); accessRequestRepository.save(r); return "<h3>✅ Approved!</h3><a href='/my-requests'>Back</a>"; }
+
+    @GetMapping("/reject-request/{id}")
+    public String reject(@PathVariable Long id) { AccessRequest r = accessRequestRepository.findById(id).get(); r.setStatus("REJECTED"); accessRequestRepository.save(r); return "<h3>❌ Rejected!</h3><a href='/my-requests'>Back</a>"; }
+
+    @GetMapping("/signup")
+    public String signup(@RequestParam String username, @RequestParam String password) { 
+        User newUser = new User(); newUser.setUsername(username); newUser.setPassword(passwordEncoder.encode(password)); userRepository.save(newUser); return "<h3>Account Created! <a href='/login'>Login Here</a></h3>"; 
     }
 }
