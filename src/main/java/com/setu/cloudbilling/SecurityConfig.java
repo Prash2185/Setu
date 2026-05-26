@@ -21,19 +21,29 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-            .csrf(csrf -> csrf.disable()) 
+            .csrf(csrf -> csrf.disable())
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/", "/login/**", "/error", "/share/**", "/signup", "/css/**", "/js/**").permitAll()
+                .requestMatchers("/", "/login/**", "/error", "/css/**", "/js/**").permitAll()
+                .requestMatchers("/share/**").authenticated()
                 .anyRequest().authenticated()
             )
             .formLogin(form -> form
-                .loginPage("/login") 
+                .loginPage("/login")
                 .defaultSuccessUrl("/dashboard", true)
                 .permitAll()
             )
             .oauth2Login(oauth2 -> oauth2
-                .loginPage("/login") 
-                .defaultSuccessUrl("/dashboard", true)
+                .loginPage("/login")
+                .successHandler((request, response, authentication) -> {
+                    org.springframework.security.web.savedrequest.SavedRequest savedRequest = (org.springframework.security.web.savedrequest.SavedRequest)
+                            request.getSession().getAttribute("SPRING_SECURITY_SAVED_REQUEST");
+
+                    if (savedRequest != null) {
+                        response.sendRedirect(savedRequest.getRedirectUrl());
+                    } else {
+                        response.sendRedirect("/dashboard");
+                    }
+                })
             )
             .logout(logout -> logout
                 .logoutSuccessUrl("/")
