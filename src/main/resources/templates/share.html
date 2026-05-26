@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8" />
+    <title>Shared Plan</title>
+</head>
+<body>
+    <h1>Yeh Raha Tera Shared Plan! 🚀</h1>
+
+    <div th:if="${error}">
+        <h3 th:text="${error}"></h3>
+    </div>
+
+    <div th:if="${expired}">
+        <h2>⏳ Link Expired</h2>
+        <p>This share link has expired. Please ask the owner to generate a new one.</p>
+    </div>
+
+    <div th:if="${fileData}">
+        <h2 th:text="${fileData.fileName}"></h2>
+        <p>Owner: <span th:text="${fileData.owner}"></span></p>
+        <p>Size: <span th:text="${fileData.fileSizeMB}"></span> MB</p>
+
+        <div th:if="${isOwner}">
+            <a th:href="@{'/download/' + ${fileData.fileName}}">Download</a>
+        </div>
+
+        <div th:if="${accessStatus} == 'APPROVED'">
+            <a th:href="@{'/download/' + ${fileData.fileName}}">Download (Approved)</a>
+        </div>
+
+        <div th:if="${accessStatus} == 'PENDING'">
+            <p>Your access request is pending.</p>
+        </div>
+
+        <div th:if="${accessStatus} == 'NONE'">
+            <form method="post" th:action="@{'/request-access/' + ${fileData.shareId}}">
+                <button type="submit">Request Access</button>
+            </form>
+        </div>
+    </div>
+
+</body>
+</html>
