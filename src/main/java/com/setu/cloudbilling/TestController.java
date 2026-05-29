@@ -1,29 +1,22 @@
 package com.setu.cloudbilling;
 
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
-
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.core.user.OAuth2User;
-import org.springframework.stereotype.Controller;
-import org.springframework.ui.Model;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.ModelAndView;
 import org.springframework.web.servlet.view.RedirectView;
 
-@Controller
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+@RestController
 public class TestController {
 
     @Autowired private FileMetadataRepository repository;
@@ -62,7 +55,6 @@ public class TestController {
     }
 
     @GetMapping(value = "/", produces = "text/html")
-    @ResponseBody
     public String showUploadForm(Authentication authentication) {
         return "<script>window.location.href='/dashboard';</script>";
     }
@@ -86,9 +78,7 @@ public class TestController {
         double totalMB = 0;
         for(FileMetadata f : userFiles) totalMB += f.getFileSizeMB();
 
-        // 🚀 Apply free 50 MB allowance before billing
-        double billableStorage = Math.max(0, totalMB - 50.0);
-        double totalBill = billableStorage * userPlan.getRatePerMB();
+        double totalBill = totalMB * userPlan.getRatePerMB();
         double storagePercent = (totalMB / userPlan.getMaxStorageMB()) * 100;
 
         ModelAndView mav = new ModelAndView("dashboard");
@@ -105,7 +95,6 @@ public class TestController {
     }
 
     @PostMapping("/upload")
-    @ResponseBody
     public String uploadFile(@RequestParam("file") MultipartFile file) {
         try {
             String dbUser = SecurityContextHolder.getContext().getAuthentication().getName();
@@ -124,48 +113,15 @@ public class TestController {
             String originalFileName = file.getOriginalFilename();
             if (originalFileName == null || originalFileName.contains("..")) return "Invalid File";
 
-            // ==========================================
-            // 🗂️ THE FINAL BOSS: SMART OBJECT VERSIONING
-            // ==========================================
-            String cleanOriginalName = originalFileName.replaceAll("\\s+", "_");
-            String baseName = cleanOriginalName;
-            String extension = "";
-
-            int dotIndex = cleanOriginalName.lastIndexOf('.');
-            if (dotIndex > 0) {
-                baseName = cleanOriginalName.substring(0, dotIndex);
-                extension = cleanOriginalName.substring(dotIndex);
-            }
-
-            int versionCount = 0;
-            for (FileMetadata f : userFiles) {
-                if (f.getFileName().contains(baseName)) {
-                    versionCount++;
-                }
-            }
-
-            String versionedFileName = cleanOriginalName;
-            if (versionCount > 0) {
-                versionedFileName = baseName + "_v" + (versionCount + 1) + extension;
-            }
-
-            String finalFileName = System.currentTimeMillis() + "_" + versionedFileName;
-            // ==========================================
-
-            
-            // 🛡️ SECURITY FIX 1: Supabase mein folder bana kar upload karo
-            String objectPath = dbUser + "/" + finalFileName;
-            supabaseStorageService.uploadFile(file, objectPath);
+            String finalFileName = System.currentTimeMillis() + "_" + originalFileName.replaceAll("\\s+", "_");
+            supabaseStorageService.uploadFile(file, finalFileName);
             
             FileMetadata metaData = new FileMetadata();
-            metaData.setFileName(finalFileName); // Database mein file ka naam clean rahega
+            metaData.setFileName(finalFileName); 
             metaData.setFileSizeMB(newFileMB);
             metaData.setOwner(dbUser);
             metaData.setShareId(UUID.randomUUID().toString());
             metaData.setFileTag(generateSmartTag(originalFileName));
-            metaData.setShareExpiryTime(LocalDateTime.now().plusHours(24));
-
-
             
             repository.save(metaData); 
 
@@ -181,21 +137,17 @@ public class TestController {
     public RedirectView downloadFile(@PathVariable String fileName) { 
         String currentUser = SecurityContextHolder.getContext().getAuthentication().getName();
         
+        // Find file to get its size for Bandwidth tracking
         FileMetadata fileInfo = repository.findByFileName(fileName);
-        if (fileInfo == null) return new RedirectView("/dashboard"); // Agar file nahi mili toh wapas bhej do
-        
-        double egressMB = fileInfo.getFileSizeMB();
+        double egressMB = (fileInfo != null) ? fileInfo.getFileSizeMB() : 0.0;
 
         // 🔵 SENSOR 2: Log the DOWNLOAD (Egress) Event
         usageEventRepository.save(new UsageEvent(currentUser, "DOWNLOAD", fileName, egressMB, LocalDateTime.now()));
 
-        // 🛡️ SECURITY FIX 2: Supabase se folder ke andar se URL mangwao
-        String objectPath = fileInfo.getOwner() + "/" + fileName;
-        return new RedirectView(supabaseStorageService.getPublicUrl(objectPath)); 
+        return new RedirectView(supabaseStorageService.getPublicUrl(fileName)); 
     }
 
     @GetMapping("/delete/{id}")
-    @ResponseBody
     public String deleteFile(@PathVariable Long id) {
         try {
             Optional<FileMetadata> optionalFile = repository.findById(id);
@@ -204,11 +156,7 @@ public class TestController {
                 String currentUser = SecurityContextHolder.getContext().getAuthentication().getName();
                 
                 if (fileData.getOwner().equals(currentUser)) {
-                    
-                    // 🛡️ SECURITY FIX 3: Supabase folder mein ghus kar file delete karo
-                    String objectPath = currentUser + "/" + fileData.getFileName();
-                    supabaseStorageService.deleteFile(objectPath);
-                    
+                    supabaseStorageService.deleteFile(fileData.getFileName());
                     repository.delete(fileData);
 
                     // 🔴 SENSOR 3: Log the DELETE Event
@@ -220,7 +168,6 @@ public class TestController {
     }
 
     @PostMapping("/upgrade-plan")
-    @ResponseBody
     public String upgradePlan(@RequestParam("planType") String planType) {
         String dbUser = SecurityContextHolder.getContext().getAuthentication().getName();
         UserPlan userPlan = userPlanRepository.findByUsername(dbUser);
@@ -234,71 +181,43 @@ public class TestController {
         return "<script>window.location.href='/dashboard';</script>";
     }
 
-    @GetMapping("/share/{id}")
-    public String sharePlan(@PathVariable String id, Model model) {
-        FileMetadata fileData = repository.findByShareId(id);
-        if (fileData == null) {
-            model.addAttribute("error", "Invalid Link");
-            return "share";
-        }
-        if (fileData.getShareExpiryTime() != null && LocalDateTime.now().isAfter(fileData.getShareExpiryTime())) {
-            model.addAttribute("expired", true);
-            return "share";
-        }
-
-        // Safely detect authenticated user (may be anonymous)
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        String currentUser = null;
-        if (auth != null && auth.isAuthenticated() && !(auth instanceof AnonymousAuthenticationToken)) {
-            currentUser = auth.getName();
-        }
-
-        // Add file data and metadata to model for the Thymeleaf page to render
-        model.addAttribute("fileData", fileData);
-        model.addAttribute("isOwner", currentUser != null && currentUser.equals(fileData.getOwner()));
-
-        // Access request status (if user logged in)
-        if (currentUser != null) {
-            AccessRequest req = accessRequestRepository.findByShareIdAndRequesterUsername(id, currentUser);
-            if (req == null) model.addAttribute("accessStatus", "NONE");
-            else model.addAttribute("accessStatus", req.getStatus());
-        }
-
-        return "share";
+    @GetMapping(value = "/share/{uuid}", produces = "text/html")
+    public String shareFileSecurely(@PathVariable String uuid) {
+        FileMetadata fileData = repository.findByShareId(uuid);
+        if (fileData == null) return "<h3>⚠️ Invalid Link!</h3>";
+        String currentUser = SecurityContextHolder.getContext().getAuthentication().getName();
+        if (currentUser.equals(fileData.getOwner())) return "<script>window.location.href='/download/" + fileData.getFileName() + "';</script>";
+        AccessRequest req = accessRequestRepository.findByShareIdAndRequesterUsername(uuid, currentUser);
+        if (req == null) return "<h2>🔒 Restricted</h2><form method='POST' action='/request-access/" + uuid + "'><button type='submit'>Request Access</button></form>";
+        else if (req.getStatus().equals("PENDING")) return "<h3>⏳ Pending...</h3>";
+        else if (req.getStatus().equals("APPROVED")) return "<script>window.location.href='/download/" + fileData.getFileName() + "';</script>";
+        else return "<h3 style='color:red;'>❌ Rejected.</h3>"; 
     }
 
     @PostMapping("/request-access/{uuid}")
-    @ResponseBody
     public String sendRequest(@PathVariable String uuid) {
         FileMetadata file = repository.findByShareId(uuid);
         AccessRequest req = new AccessRequest(); req.setShareId(uuid); req.setRequesterUsername(SecurityContextHolder.getContext().getAuthentication().getName()); req.setOwnerUsername(file.getOwner());
         accessRequestRepository.save(req); return "<h3>🚀 Request Sent!</h3><a href='/share/" + uuid + "'>Back</a>";
     }
 
-    @GetMapping("/my-requests")
-        public ModelAndView viewRequests() {
-            String currentUser = SecurityContextHolder.getContext().getAuthentication().getName();
-            
-            // Database se saari pending requests nikaalo
-            List<AccessRequest> requests = accessRequestRepository.findByOwnerUsernameAndStatus(currentUser, "PENDING");
-        
-        // Isko my-requests.html page par bhej do
-            ModelAndView mav = new ModelAndView("my-requests");
-            mav.addObject("requests", requests);
-            return mav;
+    @GetMapping(value = "/my-requests", produces = "text/html")
+    public String viewRequests() {
+        String currentUser = SecurityContextHolder.getContext().getAuthentication().getName();
+        List<AccessRequest> requests = accessRequestRepository.findByOwnerUsernameAndStatus(currentUser, "PENDING");
+        StringBuilder html = new StringBuilder("<h2>📩 Pending Requests</h2><ul>");
+        for (AccessRequest r : requests) html.append("<li>User ID <b>").append(r.getRequesterUsername()).append("</b> wants access. <a href='/approve-request/").append(r.getId()).append("'>[✅ Yes]</a> <a href='/reject-request/").append(r.getId()).append("' style='color:red;'>[❌ No]</a></li><br>");
+        return html.append("</ul><br><a href='/dashboard'>Back</a>").toString();
     }
 
     @GetMapping("/approve-request/{id}")
-    @ResponseBody
     public String approve(@PathVariable Long id) { AccessRequest r = accessRequestRepository.findById(id).get(); r.setStatus("APPROVED"); accessRequestRepository.save(r); return "<h3>✅ Approved!</h3><a href='/my-requests'>Back</a>"; }
 
     @GetMapping("/reject-request/{id}")
-    @ResponseBody
     public String reject(@PathVariable Long id) { AccessRequest r = accessRequestRepository.findById(id).get(); r.setStatus("REJECTED"); accessRequestRepository.save(r); return "<h3>❌ Rejected!</h3><a href='/my-requests'>Back</a>"; }
 
     @GetMapping("/signup")
-    @ResponseBody
     public String signup(@RequestParam String username, @RequestParam String password) { 
-        User newUser = new User(); newUser.setUsername(username); newUser.setPassword(passwordEncoder.encode(password)); userRepository.save(newUser); return "<h3>Account Created! <a href='/login'>Login Here</a></h3>"; 
+        User newUser = new User(); newUser.setName(username); newUser.setPassword(passwordEncoder.encode(password)); userRepository.save(newUser); return "<h3>Account Created! <a href='/login'>Login Here</a></h3>"; 
     }
 }

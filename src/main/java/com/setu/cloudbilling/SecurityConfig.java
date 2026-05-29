@@ -12,6 +12,12 @@ import org.springframework.security.web.SecurityFilterChain;
 @EnableWebSecurity
 public class SecurityConfig {
 
+    private final CustomOAuth2UserService customOAuth2UserService;
+
+    public SecurityConfig(CustomOAuth2UserService customOAuth2UserService) {
+        this.customOAuth2UserService = customOAuth2UserService;
+    }
+
     // 👇 THE MISSING ENGINE (Password Encryptor) 🔐
     @Bean
     public PasswordEncoder passwordEncoder() {
@@ -23,7 +29,7 @@ public class SecurityConfig {
         http
             .csrf(csrf -> csrf.disable())
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/", "/login/**", "/error", "/css/**", "/js/**").permitAll()
+                .requestMatchers("/", "/login/**", "/register", "/register/**", "/signup", "/signup/**", "/error", "/css/**", "/js/**").permitAll()
                 .requestMatchers("/share/**").authenticated()
                 .anyRequest().authenticated()
             )
@@ -34,6 +40,7 @@ public class SecurityConfig {
             )
             .oauth2Login(oauth2 -> oauth2
                 .loginPage("/login")
+                .userInfoEndpoint(userInfo -> userInfo.userService(customOAuth2UserService))
                 .successHandler((request, response, authentication) -> {
                     org.springframework.security.web.savedrequest.SavedRequest savedRequest = (org.springframework.security.web.savedrequest.SavedRequest)
                             request.getSession().getAttribute("SPRING_SECURITY_SAVED_REQUEST");

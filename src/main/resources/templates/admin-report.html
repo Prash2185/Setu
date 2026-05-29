@@ -44,7 +44,13 @@
                     
                     <td class="fw-bold" th:style="${user.totalBill == '0.0000' ? 'color: green;' : 'color: red;'}" th:text="'₹ ' + ${user.totalBill}">₹ 0.0000</td>
                     
-                    <td><button class="btn btn-sm btn-outline-danger">Suspend</button></td>
+                    <td>
+                        <form th:action="@{/admin/suspend}" method="post" style="display:inline">
+                            <input type="hidden" name="email" th:value="${user.username}" />
+                            <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}" />
+                            <button type="submit" class="btn btn-sm btn-outline-danger">Suspend</button>
+                        </form>
+                    </td>
                 </tr>
             </tbody>
         </table>

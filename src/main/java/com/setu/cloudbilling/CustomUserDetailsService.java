@@ -16,17 +16,17 @@ public class CustomUserDetailsService implements UserDetailsService {
 
     @Override
     public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
-        // Database se user dhundho
-        User user = userRepository.findByUsername(username);
-        if (user == null) {
-            throw new UsernameNotFoundException("Bhai, yeh user exist nahi karta!");
-        }
-        
+        // Database se user dhundho (email used as username)
+        User user = userRepository.findByEmail(username)
+            .orElseThrow(() -> new UsernameNotFoundException("Bhai, yeh user exist nahi karta!"));
+
+        String pwd = user.getPassword() == null ? "" : user.getPassword();
+
         // Spring Security ko uska user format bana kar do
         return org.springframework.security.core.userdetails.User
-                .withUsername(user.getUsername())
-                .password(user.getPassword()) // Yeh encrypted hona chahiye
-                .roles(user.getRole().replace("ROLE_", ""))
-                .build();
+            .withUsername(user.getEmail())
+            .password(pwd)
+            .roles(user.getRole().replace("ROLE_", ""))
+            .build();
     }
 }

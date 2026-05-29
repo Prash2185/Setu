@@ -5,19 +5,23 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.servlet.ModelAndView;
 
-@RestController
+@Controller
 public class AdminController {
 
     // 🚀 THE FIX: Yahan UserRepository ki jagah UserPlanRepository lagana hai
     @Autowired private UserPlanRepository userPlanRepo;
     @Autowired private UsageEventRepository usageRepo;
     @Autowired private FileMetadataRepository fileRepo; 
+    @Autowired private UserRepository userRepository;
 
     // Pricing & Limits
     private final double RATE_PER_MB_STORAGE = 0.005;
@@ -69,5 +73,25 @@ public class AdminController {
         ModelAndView mav = new ModelAndView("admin-report");
         mav.addObject("reports", reportList);
         return mav;
+    }
+
+    @PostMapping("/admin/suspend")
+    public ModelAndView suspendUser(@org.springframework.web.bind.annotation.RequestParam("email") String email) {
+        try {
+            Optional<User> u = userRepository.findByEmail(email);
+            if (u.isPresent()) {
+                User user = u.get();
+                user.setSuspended(true);
+                userRepository.save(user);
+            } else {
+                System.out.println("User not found with email: " + email);
+            }
+        } catch (Exception e) {
+            System.out.println("🔥 BHAI ERROR YAHAN HAI: " + e.getMessage());
+            e.printStackTrace();
+            return new ModelAndView("error");
+        }
+
+        return new ModelAndView("redirect:/admin/usage-report");
     }
 }
