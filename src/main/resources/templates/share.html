@@ -1,85 +1,70 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Shared File | Setu Cloud</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure File Share | Setu Cloud</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        body { background:#f8fafc; }
-        .card-ghost{ border-radius:14px; box-shadow:0 8px 30px rgba(2,6,23,0.06); }
+        body {
+            background-color: #0f172a; /* Dark sleek background */
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #f8fafc;
+        }
+        .share-card {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            max-width: 450px;
+            margin: auto;
+        }
+        .file-icon {
+            font-size: 80px;
+            color: #3b82f6; /* Corporate Blue */
+            text-shadow: 0 0 20px rgba(59, 130, 246, 0.5);
+        }
+        .btn-download {
+            background-color: #deff9a; /* Neon Green from your slides */
+            color: #0f172a;
+            font-weight: bold;
+            border-radius: 50px;
+            padding: 12px 24px;
+            border: none;
+            transition: all 0.3s ease;
+        }
+        .btn-download:hover {
+            background-color: #c4eb71;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(222, 255, 154, 0.4);
+        }
     </style>
 </head>
-<body>
+<body class="d-flex align-items-center justify-content-center vh-100">
 
-<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
-    <div class="container">
-        <a class="navbar-brand fw-bold" href="/dashboard">☁️ SETU CLOUD</a>
-        <div>
-            <a th:href="@{/dashboard}" class="btn btn-sm btn-outline-light">Dashboard</a>
+    <div class="container text-center">
+        <div class="share-card p-5">
+            <div class="mb-4">
+                <i class="fa-solid fa-file-shield file-icon"></i>
+            </div>
+            
+            <h3 class="mb-2" th:text="${file.fileName}">Q4_Financial_Report.pdf</h3>
+            <p class="text-muted mb-4">
+                <i class="fa-solid fa-hdd me-1"></i> <span th:text="${file.size}">2.4 MB</span> • 
+                <i class="fa-solid fa-lock me-1 ms-2"></i> Secure Transfer
+            </p>
+
+            <a th:href="@{/download/{id}(id=${file.id})}" class="btn btn-download w-100 fs-5">
+                <i class="fa-solid fa-cloud-arrow-down me-2"></i> Download File
+            </a>
+            
+            <div class="mt-4">
+                <small class="text-secondary"><i class="fa-solid fa-shield-halved"></i> Powered by Setu IAM Security</small>
+            </div>
         </div>
     </div>
-</nav>
-
-<div class="container d-flex align-items-center justify-content-center" style="min-height:70vh;">
-    <div class="card card-ghost p-4" style="max-width:720px; width:100%">
-        <div class="text-center mb-3">
-            <h4 class="fw-bold">Shared File</h4>
-            <p class="text-muted mb-0">Securely view and request access to shared files</p>
-        </div>
-
-        <hr />
-
-        <div th:if="${error}" class="alert alert-danger text-center">
-            <strong>⚠️ Error</strong>
-            <div th:text="${error}"></div>
-        </div>
-
-        <div th:if="${expired}" class="text-center py-5">
-            <div class="display-4">⏳</div>
-            <h5 class="fw-semibold">Link expired</h5>
-            <p class="text-muted">This share link is no longer active. Ask the owner to share again.</p>
-            <a th:href="@{/dashboard}" class="btn btn-outline-primary mt-3">Back to Dashboard</a>
-        </div>
-
-        <div th:if="${fileData}" class="row g-3 align-items-center">
-            <div class="col-9">
-                <h5 class="mb-1" th:text="${fileData.fileName}">Plan_Details.pdf</h5>
-                <div class="text-muted small">Owner: <b th:text="${fileData.owner}">owner@example.com</b></div>
-                <div class="text-muted small">File ID: <span th:text="${fileData.shareId}"></span></div>
-            </div>
-            <div class="col-3 text-end">
-                <span class="badge bg-secondary" th:text="${fileData.fileSizeMB} + ' MB'">2.4 MB</span>
-            </div>
-
-            <div class="col-12">
-                <div th:if="${isOwner}">
-                    <a th:href="@{'/download/' + ${fileData.fileName}}" class="btn btn-primary w-100">📥 Download Original File</a>
-                    <div class="text-success small text-center mt-2">You are the owner of this file</div>
-                </div>
-
-                <div th:if="${accessStatus} == 'APPROVED' and !${isOwner}">
-                    <a th:href="@{'/download/' + ${fileData.fileName}}" class="btn btn-success w-100">📥 Download File (Access Approved)</a>
-                </div>
-
-                <div th:if="${accessStatus} == 'PENDING' and !${isOwner}" class="alert alert-warning mt-3 text-center">
-                    <div class="mb-1">⏳ Request Pending</div>
-                    <div class="small">The owner has been notified. Refresh this page once approved.</div>
-                </div>
-
-                <div th:if="${accessStatus} == 'NONE' and !${isOwner}">
-                    <form method="post" th:action="@{'/request-access/' + ${fileData.shareId}}">
-                        <button type="submit" class="btn btn-outline-primary w-100">🔑 Request Access</button>
-                    </form>
-                    <div class="text-muted small text-center mt-2">You don't have permission to download yet.</div>
-                </div>
-            </div>
-        </div>
-
-    </div>
-</div>
 
 </body>
 </html>
