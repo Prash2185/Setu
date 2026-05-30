@@ -2,60 +2,90 @@
 <html lang="en" xmlns:th="http://www.thymeleaf.org">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Access Requests - Zoho Setu</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
-    <style> 
-        body { background-color: #f4f6f9; } 
-        .custom-card { border-radius: 12px; border: none; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <style>
+        body { background-color: #f4f6f9; }
+        .request-card { border-radius: 12px; border: none; box-shadow: 0 6px 18px rgba(14,30,37,0.06); }
+        .avatar {
+            width:48px; height:48px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-weight:700; color:#fff;
+        }
+        .small-muted { font-size:0.85rem; color:#6c757d; }
     </style>
 </head>
 <body>
 
-<nav class="navbar navbar-dark bg-dark mb-5">
+<nav class="navbar navbar-dark bg-dark">
     <div class="container">
         <a class="navbar-brand fw-bold" href="/dashboard">☁️ Zoho Setu</a>
-        <a href="/dashboard" class="btn btn-outline-light btn-sm">🔙 Back to Dashboard</a>
+        <div>
+            <a href="/dashboard" class="btn btn-outline-light btn-sm">🔙 Dashboard</a>
+        </div>
     </div>
 </nav>
 
-<div class="container">
-    <div class="card custom-card p-4 mx-auto" style="max-width: 800px;">
-        <h4 class="mb-4 text-dark"><i class="bi bi-envelope-paper-fill text-primary me-2"></i> Pending Access Requests</h4>
-        
-        <div th:if="${#lists.isEmpty(requests)}" class="alert alert-success text-center fw-bold rounded-3">
-            🎉 All caught up! No pending requests right now.
-        </div>
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="d-flex align-items-center mb-3">
+                <h3 class="me-auto"><i class="bi bi-envelope-paper-fill text-primary me-2"></i> Access Requests</h3>
+                <input id="requestSearch" type="search" class="form-control form-control-sm ms-3" style="max-width:260px;" placeholder="🔍 Search requester...">
+            </div>
 
-        <table class="table table-hover align-middle border" th:unless="${#lists.isEmpty(requests)}">
-            <thead class="table-light">
-                <tr>
-                    <th>Requester User ID</th>
-                    <th>Status</th>
-                    <th class="text-end">Action</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr th:each="req : ${requests}">
-                    <td class="fw-bold text-secondary" th:text="${req.requesterUsername}">user123</td>
-                    <td>
-                        <span class="badge bg-warning text-dark border border-warning px-3 py-2 rounded-pill">
-                            <i class="bi bi-hourglass-split"></i> Pending
-                        </span>
-                    </td>
-                    <td class="text-end">
-                        <a th:href="@{'/approve-request/' + ${req.id}}" class="btn btn-sm btn-success fw-bold me-2">
-                            <i class="bi bi-check-circle-fill"></i> Approve
-                        </a>
-                        <a th:href="@{'/reject-request/' + ${req.id}}" class="btn btn-sm btn-danger fw-bold">
-                            <i class="bi bi-x-circle-fill"></i> Reject
-                        </a>
-                    </td>
-                </tr>
-            </tbody>
-        </table>
+            <div th:if="${#lists.isEmpty(requests)}" class="alert alert-light text-center shadow-sm">
+                <h5 class="mb-1">You're all set 🎉</h5>
+                <p class="small-muted mb-0">No pending access requests at the moment.</p>
+            </div>
+
+            <div th:unless="${#lis ts.isEmpty(requests)}" class="list-group">
+                <div th:each="req : ${requests}" class="list-group-item mb-3 request-card p-3">
+                    <div class="d-flex align-items-start gap-3">
+                        <div>
+                            <div class="avatar bg-primary text-uppercase" th:style="'background:' + (${req.status}=='APPROVED' ? '#20c997' : (${req.status}=='REJECTED' ? '#dc3545' : '#0d6efd'))" th:text="${#strings.substring(req.requesterUsername,0,1)}">U</div>
+                        </div>
+                        <div class="flex-grow-1">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <div class="fw-bold" th:text="${req.requesterUsername}">user123</div>
+                                    <div class="small-muted" th:text="'Share: ' + ${req.shareId}">Share: abc123</div>
+                                </div>
+                                <div class="text-end">
+                                    <span th:switch="${req.status}">
+                                        <span th:case="'APPROVED'" class="badge bg-success">Approved</span>
+                                        <span th:case="'REJECTED'" class="badge bg-danger">Rejected</span>
+                                        <span th:case="*" class="badge bg-warning text-dark">Pending</span>
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div class="mt-3 d-flex justify-content-between align-items-center">
+                                <div class="small-muted">Requested from <b th:text="${req.ownerUsername}">owner@example.com</b></div>
+                                <div>
+                                    <a th:if="${req.status} == 'PENDING'" th:href="@{'/approve-request/' + ${req.id}}" class="btn btn-sm btn-success me-2"><i class="bi bi-check2-circle"></i> Approve</a>
+                                    <a th:if="${req.status} == 'PENDING'" th:href="@{'/reject-request/' + ${req.id}}" class="btn btn-sm btn-outline-danger me-2"><i class="bi bi-x-circle"></i> Reject</a>
+                                    <a th:href="@{'/share/' + ${req.shareId}}" class="btn btn-sm btn-outline-primary"><i class="bi bi-share-fill"></i> View Share</a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
+
+<script>
+    document.getElementById('requestSearch').addEventListener('input', function(){
+        const q = this.value.toLowerCase();
+        document.querySelectorAll('.list-group-item').forEach(item => {
+            const text = item.innerText.toLowerCase();
+            item.style.display = text.indexOf(q) > -1 ? '' : 'none';
+        });
+    });
+</script>
 
 </body>
 </html>
